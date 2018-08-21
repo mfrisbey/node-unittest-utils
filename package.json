@@ -1,0 +1,42 @@
+{
+  "name": "node-unittest-utils",
+  "version": "1.0.0",
+  "description": "Utilities and dependency mocks for unit testing in node",
+  "main": "./build/index.js",
+  "scripts": {
+    "test": "./node_modules/.bin/mocha --recursive --require babel-register",
+    "build": "./node_modules/.bin/rimraf build && babel ./src --out-dir build --ignore ./node_modules,./test",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mfrisbey/node-unittest-utils.git"
+  },
+  "keywords": [
+    "node",
+    "mock",
+    "unit",
+    "test"
+  ],
+  "author": "Mark Frisbey",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mfrisbey/node-unittest-utils/issues"
+  },
+  "homepage": "https://github.com/mfrisbey/node-unittest-utils#readme",
+  "dependencies": {
+    "lokijs": "^1.5.5",
+    "mime": "^2.3.1",
+    "proxyquire": "^2.0.1",
+    "stream-buffers": "^3.0.2"
+  },
+  "devDependencies": {
+    "babel-cli": "^6.26.0",
+    "babel-preset-env": "^1.7.0",
+    "babel-preset-stage-2": "^6.24.1",
+    "expect.js": "^0.3.1",
+    "mocha": "^5.2.0",
+    "request": "^2.88.0",
+    "rimraf": "^2.6.2"
+  }
+}
