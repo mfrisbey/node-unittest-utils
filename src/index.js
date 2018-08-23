@@ -92,3 +92,4 @@ export * from './lib/mock-request';
 export * from './lib/mock-readable-stream';
 export * from './lib/mock-writable-stream';
 export * from './lib/mock-fs';
+export * from './lib/mock-aem-server';

@@ -1,5 +1,6 @@
 import {MockClientRequest} from './mock-client-request';
 import {HttpServer} from './http-server';
+import {MockAemServer} from './mock-aem-server';
 
 let httpServer = new HttpServer();
 
@@ -89,10 +90,18 @@ export function setUrlResponseStatusCode(method, url, statusCode) {
 }
 
 /**
+ * Sets the HTTP server that the mock request framework will use internally to handle requests.
+ * @param {HttpServer} server Server instance for fulfilling requests.
+ */
+export function setHttpServer(server) {
+  httpServer = server;
+}
+
+/**
  * Clears all registered callback, urls, and request counts.
  */
 export function resetRequestState() {
-  httpServer = new HttpServer();
+  httpServer.resetState();
 }
 
 /**
@@ -107,6 +116,13 @@ export function printAllUrlData() {
  */
 export function printAllRequestedUrls() {
   httpServer.printAllRequestedUrls();
+}
+
+/**
+ * Prints a list of all the URLs that have registered custom callbacks.
+ */
+export function printAllRegisteredUrls() {
+  httpServer.printAllRegisteredUrls();
 }
 
 /**

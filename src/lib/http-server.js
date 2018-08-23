@@ -14,10 +14,20 @@ import mime from 'mime';
  */
 export class HttpServer {
 
+  static DESTINATION_HEADER = 'X-Destination';
+
   /**
    * Initializes an empty server.
    */
   constructor() {
+    this.resetState();
+  }
+
+  /**
+   * Resets the server's state, including clearing out all registered URLs, callbacks, data,
+   * and requested urls.
+   */
+  resetState() {
     this.registeredUrls = {};
     this.urlData = {};
     this.requestCallback = (options, callback) => {callback()};
@@ -53,7 +63,18 @@ export class HttpServer {
     if (!this.registeredUrls[method]) {
       this.registeredUrls[method] = {};
     }
-    this.registeredUrls[method][url] = callback;
+    this.registeredUrls[method][_getUrlDataKey(url)] = callback;
+  }
+
+  /**
+   * Removes the callback associated with a specified method/url combination.
+   * @param {string} method An HTTP method.
+   * @param {string} url Full HTTP URL.
+   */
+  unregisterUrl(method, url) {
+    if (this.isUrlRegistered(method, url)) {
+      delete this.registeredUrls[method][_getUrlDataKey(url)];
+    }
   }
 
   /**
@@ -63,8 +84,8 @@ export class HttpServer {
    * @returns {boolean} True if the url is registered, false otherwise.
    */
   isUrlRegistered(method, url) {
-    if (this.requestedUrls[method]) {
-      return !!this.registeredUrls[method][url];
+    if (this.registeredUrls[method]) {
+      return this.registeredUrls[method][_getUrlDataKey(url)];
     }
     return false;
   }
@@ -72,11 +93,12 @@ export class HttpServer {
   /**
    * Sets the default request options and data that will be returned by the server when a GET/HEAD request is sent to a URL.
    * @param {string} url Full HTTP URL.
+   * @param {object} requestOptions The options for the request that created the url data.
    * @param {object} responseOptions Will be used as the response's options, including such things as statusCode and headers.
    * @param {string} responseBody Will be used as the response's body.
    */
-  setUrlData(url, responseOptions={}, responseBody='') {
-    this.urlData[url] = {responseOptions, responseBody};
+  setUrlData(url, requestOptions={}, responseOptions={}, responseBody='') {
+    this.urlData[_getUrlDataKey(url)] = {responseOptions, responseBody};
   }
 
   /**
@@ -85,7 +107,7 @@ export class HttpServer {
    * @returns {boolean} True if the url has default data, otherwise false.
    */
   urlExists(url) {
-    return !!this.urlData[url];
+    return !!this.urlData[_getUrlDataKey(url)];
   }
 
   /**
@@ -94,7 +116,8 @@ export class HttpServer {
    * @returns {object} Response options, or null if the url has no default data.
    */
   getUrlResponseOptions(url) {
-    return this.urlData[url] ? this.urlData[url].responseOptions : null;
+    const key = _getUrlDataKey(url);
+    return this.urlData[key] ? this.urlData[key].responseOptions : null;
   }
 
   /**
@@ -103,7 +126,8 @@ export class HttpServer {
    * @returns {string} Response body, or null if the url has no default data.
    */
   getUrlResponseBody(url) {
-    return this.urlData[url] ? this.urlData[url].responseBody : null;
+    const key = _getUrlDataKey(url);
+    return this.urlData[key] ? this.urlData[key].responseBody : null;
   }
 
   /**
@@ -111,8 +135,9 @@ export class HttpServer {
    * @param {string} url Full HTTP URL.
    */
   deleteUrlData(url) {
-    if (this.urlData[url]) {
-      delete this.urlData[url];
+    const key = _getUrlDataKey(url);
+    if (this.urlData[key]) {
+      delete this.urlData[key];
     }
   }
 
@@ -122,9 +147,33 @@ export class HttpServer {
    * @param {string} targetUrl URL where the data will be moved.
    */
   moveUrl(sourceUrl, targetUrl) {
+
+    function _isChildUrl(parent, child) {
+      return child.startsWith(`${parent}/`);
+    }
+
+    function _getNewUrl(oldParent, newParent, child) {
+      return `${newParent}${child.substr(oldParent.length)}`
+    }
+
     if (this.urlExists(sourceUrl)) {
-      this.setUrlData(targetUrl, this.getUrlResponseOptions(sourceUrl), this.getUrlResponseBody(sourceUrl));
+      this.setUrlData(targetUrl, {}, this.getUrlResponseOptions(sourceUrl), this.getUrlResponseBody(sourceUrl));
       this.deleteUrlData(sourceUrl);
+
+      Object.keys(this.urlData).forEach(url => {
+        if (_isChildUrl(sourceUrl, url)) {
+          this.setUrlData(_getNewUrl(sourceUrl, targetUrl, url), this.getUrlResponseOptions(url), this.getUrlResponseBody(url));
+          this.deleteUrlData(url);
+        }
+      });
+      Object.keys(this.registeredUrls).forEach(method => {
+        Object.keys(this.registeredUrls[method]).forEach(url => {
+          if (_isChildUrl(sourceUrl, url)) {
+            this.registerUrl(method, _getNewUrl(sourceUrl, targetUrl, url), this.registeredUrls[method][url]);
+            this.unregisterUrl(method, url);
+          }
+        });
+      });
     }
   }
 
@@ -137,52 +186,56 @@ export class HttpServer {
    * @param {MockIncomingMessage} callback.response The response as generated by the server.
    */
   getResponse(options, requestBody, callback) {
+    options.method = options.method || 'GET';
     const self = this;
-    const {url, method='GET', ignoreCount=false} = options;
-    const urlCallback = this.registeredUrls[method] ? this.registeredUrls[method][url] : undefined;
+    const {ignoreCount=false} = options;
 
-    this.requestCallback(options, (err, requestOptions, responseOptions, responseBody) => {
-      if (!requestOptions) {
-        requestOptions = options;
-      }
-
-      const requestedUrl = requestOptions.url;
-
-      if (!ignoreCount) {
-        if (!this.requestedUrls[method]) {
-          this.requestedUrls[method] = {};
+    process.nextTick(() => {
+      self.requestCallback(options, (err, requestOptions, responseOptions, responseBody) => {
+        if (!requestOptions) {
+          requestOptions = options;
         }
-        if (!this.requestedUrls[method][requestedUrl]) {
-          this.requestedUrls[method][requestedUrl] = [];
-        }
-        this.requestedUrls[method][requestedUrl].push(requestOptions);
-      }
 
-      if (err) {
-        callback(err);
-      } else if (responseOptions) {
-        callback(null, new MockIncomingMessage(responseOptions, responseBody));
-      } else if (urlCallback) {
-        urlCallback(requestOptions, (err, responseOptions, responseBody) => {
-          if (err) {
-            callback(err);
-            return;
+        const {url, method} = requestOptions;
+
+        if (!ignoreCount) {
+          if (!self.requestedUrls[method]) {
+            self.requestedUrls[method] = {};
           }
+          if (!self.requestedUrls[method][url]) {
+            self.requestedUrls[method][url] = [];
+          }
+          self.requestedUrls[method][url].push(options);
+        }
+
+        const urlCallback = self.registeredUrls[method] ? self.registeredUrls[method][_getUrlDataKey(url)] : undefined;
+
+        if (err) {
+          callback(err);
+        } else if (responseOptions) {
           callback(null, new MockIncomingMessage(responseOptions, responseBody));
-        });
-      } else if (method === 'GET' || method === 'HEAD') {
-         _getGetResponse.call(self, callback, requestOptions, responseBody, method === 'GET');
-      } else if (method === 'DELETE') {
-        _getDeleteResponse.call(self, callback, requestOptions, responseBody);
-      } else if (method === 'POST') {
-        _getPostResponse.call(self, callback, requestOptions, responseBody, requestBody);
-      } else if (method === 'PUT') {
-        _getPutResponse.call(self, callback, requestOptions, responseBody, requestBody);
-      } else if (method === 'MOVE') {
-        _getMoveResponse.call(self, callback, requestOptions, responseBody);
-      } else {
-        callback(null, new MockIncomingMessage({}));
-      }
+        } else if (urlCallback) {
+          urlCallback(requestOptions, (err, responseOptions, responseBody) => {
+            if (err) {
+              callback(err);
+              return;
+            }
+            callback(null, new MockIncomingMessage(responseOptions, responseBody));
+          });
+        } else if (method === 'GET' || method === 'HEAD') {
+          _getGetResponse.call(self, callback, requestOptions, responseBody, method === 'GET');
+        } else if (method === 'DELETE') {
+          _getDeleteResponse.call(self, callback, requestOptions, responseBody);
+        } else if (method === 'POST') {
+          _getPostResponse.call(self, callback, requestOptions, responseBody, requestBody);
+        } else if (method === 'PUT') {
+          _getPutResponse.call(self, callback, requestOptions, responseBody, requestBody);
+        } else if (method === 'MOVE') {
+          _getMoveResponse.call(self, callback, requestOptions, responseBody);
+        } else {
+          callback(null, new MockIncomingMessage({}));
+        }
+      });
     });
   }
 
@@ -199,6 +252,7 @@ export class HttpServer {
       console.log('');
     }
     console.log(`***** END URL DATA *****`);
+    console.log('');
   }
 
   /**
@@ -215,7 +269,27 @@ export class HttpServer {
           console.log(`   ${JSON.stringify(this.requestedUrls[method][url][i])}`);
         }
       });
+      console.log('');
     });
+    console.log(`***** END REQUESTED URLS *****`);
+    console.log('');
+  }
+
+  /**
+   * Prints all URLs that have had a custom callback registered.
+   */
+  printAllRegisteredUrls() {
+    console.log('***** REGISTERED URLS *****');
+    console.log('');
+    Object.keys(this.registeredUrls).forEach(method => {
+      console.log(`----- ${method} -----`);
+      Object.keys(this.registeredUrls[method]).forEach(url => {
+        console.log(`- ${url}`);
+      });
+      console.log('');
+    });
+    console.log('***** END REGISTERED URLS *****');
+    console.log('');
   }
 
   /**
@@ -253,6 +327,34 @@ export class HttpServer {
     }
     return null;
   }
+
+  /**
+   * Given request options from a MOVE request, retrieves the full destination URL target of the move.
+   * @param {object} [options] HTTP request options.
+   * @returns {string} The destination of a MOVE operation.
+   */
+  static getDestinationUrl(options) {
+    const {url, headers} = options;
+    const parsedSource = URL.parse(url);
+    let parsedDest = URL.parse(headers[HttpServer.DESTINATION_HEADER]);
+
+    if (!parsedDest.pathname) {
+      throw 'destination path must be specified';
+    }
+
+    return `${parsedSource.protocol}//${parsedSource.host}${parsedDest.pathname}`;
+  }
+}
+
+/**
+ * Retrieves the key to use for a url.
+ * @param {string} url URL to process.
+ * @returns {string} A url key.
+ * @private
+ */
+function _getUrlDataKey(url) {
+  const parsed = URL.parse(url);
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
 }
 
 /**
@@ -331,7 +433,7 @@ function _getDeleteResponse(callback, {url}, responseBody='') {
       this.deleteUrlData(url);
       callback(null, _createResponse(200, {}, responseBody, 'path deleted'));
     } else {
-      callback(null, _createResponse(404, {}, responseBody, 'path to delete not found'));
+      callback(null, _createResponse(404, {}, responseBody, `path to delete not found: ${url}`));
     }
   });
 }
@@ -347,18 +449,43 @@ function _getDeleteResponse(callback, {url}, responseBody='') {
  * @private
  */
 function _getPostResponse(callback, options, responseBody='', requestBody='') {
+  const self = this;
   const {url} = options;
-  _urlExists.call(this, url, (err, exists) => {
+  const parent = url.substr(0, url.lastIndexOf('/'));
+
+  function _getUrlExists(cb) {
+    const parsedParent = URL.parse(parent);
+    if (!parsedParent.pathname || parsedParent.pathname === '/') {
+      // posting to root URL is always possible
+      cb(null, true);
+      return;
+    }
+    _urlExists.call(self, parent, cb);
+  }
+
+  _getUrlExists((err, exists) => {
     if (err) {
       callback(err);
       return;
     }
-    if (exists) {
-      callback(null, _createResponse(409, {}, responseBody, 'conflict: already exists'));
-    } else {
-      this.setUrlData(url, options, requestBody);
-      callback(null, _createResponse(201, {}, responseBody, 'path created'));
+
+    if (!exists) {
+      callback(null, _createResponse(404, {}, responseBody, 'parent not found'));
+      return;
     }
+
+    _urlExists.call(this, url, (err, exists) => {
+      if (err) {
+        callback(err);
+        return;
+      }
+      if (exists) {
+        callback(null, _createResponse(409, {}, responseBody, 'conflict: already exists'));
+      } else {
+        this.setUrlData(url, options, {}, requestBody);
+        callback(null, _createResponse(201, {}, responseBody, 'path created'));
+      }
+    });
   });
 }
 
@@ -382,7 +509,7 @@ function _getPutResponse(callback, options, responseBody='', requestBody='') {
     if (!exists) {
       callback(null, _createResponse(404, {}, responseBody, 'path to update not found'));
     } else {
-      this.setUrlData(url, options, requestBody);
+      this.setUrlData(url, options, {}, requestBody);
       callback(null, _createResponse(200, {}, responseBody, 'path updated'));
     }
   });
@@ -399,28 +526,14 @@ function _getPutResponse(callback, options, responseBody='', requestBody='') {
  */
 function _getMoveResponse(callback, options, responseBody) {
   const {url, headers={}} = options;
-  let parsedSource;
-  let parsedDest;
+  let destUrl;
 
   try {
-    parsedSource = URL.parse(url);
+    destUrl = HttpServer.getDestinationUrl(options);
   } catch (e) {
-    callback(null, _createResponse(400, {}, responseBody, 'url is invalid'));
+    callback(null, _createResponse(400, {}, responseBody, e.toString()));
     return;
   }
-  try {
-    parsedDest = URL.parse(headers['x-destination']);
-  } catch (e) {
-    callback(null, _createResponse(400, {}, responseBody, 'destination url is invalid'));
-    return;
-  }
-
-  if (!parsedDest.pathname) {
-    callback(null, _createResponse(400, {}, responseBody, 'destination path must be specified'));
-    return;
-  }
-
-  const destUrl = `${parsedSource.protocol}//${parsedSource.host}${parsedDest.pathname}`;
 
   _urlExists.call(this, url, (err, exists) => {
     if (err) {

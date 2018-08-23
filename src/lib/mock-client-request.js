@@ -22,6 +22,7 @@ export class MockClientRequest extends MockWritableStream {
     this.options = options;
     this.responseCallback = responseCallback;
     this.httpServer = httpServer;
+    this.reqForm = null;
 
     if (!this.httpServer) {
       this.httpServer = new HttpServer();
@@ -36,7 +37,13 @@ export class MockClientRequest extends MockWritableStream {
     if (data) {
       this.write(data, encoding);
     }
-    this.httpServer.getResponse(this.options, this.getContentsAsString(), (err, response) => {
+    const options = this.options;
+
+    if (this.reqForm) {
+      options.form = this.reqForm.data;
+    }
+
+    this.httpServer.getResponse(options, this.getContentsAsString(), (err, response) => {
       if (err) {
         self.emit('error', err);
         if (self.responseCallback) {
@@ -76,5 +83,34 @@ export class MockClientRequest extends MockWritableStream {
       return;
     }
     super.emit.apply(this, arguments);
+  }
+
+  /**
+   * Returns a new MockForm that is associated with the request.
+   */
+  form() {
+    if (!this.reqForm) {
+      this.reqForm = new MockForm(this);
+    }
+    return this.reqForm;
+  }
+}
+
+class MockForm {
+
+  constructor(req) {
+    this.req = req;
+    this.data = {};
+  }
+
+  append(name, value, options={}) {
+    this.data[name] = value;
+    if (value.pipe) {
+      if (options.filename) {
+        value.path = options.filename;
+      }
+
+      value.pipe(this.req)
+    }
   }
 }

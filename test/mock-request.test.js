@@ -154,6 +154,18 @@ describe('mock request tests', () => {
     });
   });
 
+  it('test post url parent no exist', (done) => {
+    submitRequestWithBody({
+      url: 'http://www.adobe.com/noexist/post.jpg',
+      method: 'POST'
+    }, 'missing!', (err, res) => {
+      expect(err).not.to.be.ok();
+      expect(res).to.be.ok();
+      expect(res.statusCode).to.be(404);
+      done();
+    });
+  });
+
   it('test delete not found', (done) => {
     request({
       url: 'http://www.adobe.com/missing.jpg',
@@ -238,7 +250,7 @@ describe('mock request tests', () => {
       url: 'http://www.adobe.com/source.jpg',
       method: 'MOVE',
       headers: {
-        'x-destination': '/target.jpg'
+        'X-Destination': '/target.jpg'
       }
     }, (err, res) => {
       expect(err).not.to.be.ok();
@@ -269,7 +281,7 @@ describe('mock request tests', () => {
           url: 'http://www.adobe.com/source.jpg',
           method: 'MOVE',
           headers: {
-            'x-destination': '/target.jpg'
+            'X-Destination': '/target.jpg'
           }
         }, (err, res) => {
           expect(err).not.to.be.ok();
@@ -294,7 +306,7 @@ describe('mock request tests', () => {
         url: 'http://www.adobe.com/source.jpg',
         method: 'MOVE',
         headers: {
-          'x-destination': 'http://www.adobe.com/target.jpg'
+          'X-Destination': 'http://www.adobe.com/target.jpg'
         }
       }, (err, res) => {
         expect(err).not.to.be.ok();
@@ -327,6 +339,67 @@ describe('mock request tests', () => {
       expect(res).to.be.ok();
       expect(res.statusCode).to.be(400);
       done();
+    });
+  });
+
+  it('test move subdirs', (done) => {
+    request({
+      url: 'http://www.adobe.com/move_dir',
+      method: 'POST'
+    }, (err, res) => {
+      expect(err).not.to.be.ok();
+      expect(res).to.be.ok();
+      expect(res.statusCode).to.be(201);
+
+      request({
+        url: 'http://www.adobe.com/move_dir/subdir',
+        method: 'POST'
+      }, (err, res) => {
+        expect(err).not.to.be.ok();
+        expect(res).to.be.ok();
+        expect(res.statusCode).to.be(201);
+
+        registerUrlCallback('GET', 'http://www.adobe.com/move_dir/subdir/testfile.jpg', (options, callback) => {
+          callback(null, {statusCode: 200});
+        });
+
+        request({
+          url: 'http://www.adobe.com/move_dir',
+          method: 'MOVE',
+          headers: {
+            'X-Destination': 'http://www.adobe.com/new_dir'
+          }
+        }, (err, res) => {
+          expect(err).not.to.be.ok();
+          expect(res).to.be.ok();
+          expect(res.statusCode).to.be(201);
+
+          request('http://www.adobe.com/new_dir/subdir', (err, res) => {
+            expect(err).not.to.be.ok();
+            expect(res).to.be.ok();
+            expect(res.statusCode).to.be(200);
+
+            request('http://www.adobe.com/move_dir/subdir', (err, res) => {
+              expect(err).not.to.be.ok();
+              expect(res).to.be.ok();
+              expect(res.statusCode).to.be(404);
+
+              request('http://www.adobe.com/new_dir/subdir/testfile.jpg', (err, res) => {
+                expect(err).not.to.be.ok();
+                expect(res).to.be.ok();
+                expect(res.statusCode).to.be(200);
+
+                request('http://www.adobe.com/move_dir/subdir/testfile.jpg', (err, res) => {
+                  expect(err).not.to.be.ok();
+                  expect(res).to.be.ok();
+                  expect(res.statusCode).to.be(404);
+                  done();
+                });
+              });
+            });
+          });
+        });
+      });
     });
   });
 

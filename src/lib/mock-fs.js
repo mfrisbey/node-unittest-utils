@@ -77,6 +77,26 @@ export class MockFs extends EventEmitter {
   }
 
   /**
+   * Updates the content of a file and changes its modified dates.
+   * @param {string} fullPath Full path to the file.
+   * @param {string|Buffer} content New content for a file.
+   */
+  setFileContent(fullPath, content) {
+    _updateFileContent.call(this, fullPath, content);
+  }
+
+  /**
+   * Touches an existing file by updating its modified dates.
+   * @param {string} fullPath Full path to a file.
+   */
+  touchFile(fullPath) {
+    const entity = _getFile.call(this, fullPath);
+    _updateEntityStats.call(this, entity.getFullPath(), {
+      mtimeMs: new Date().getTime()
+    });
+  }
+
+  /**
    * Prints the entire filesystem tree to the console.
    */
   printFileSystemTree() {
@@ -173,13 +193,16 @@ export class MockFs extends EventEmitter {
    */
 
   close(fd, callback) {
-    try {
-      this.closeSync(fd);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback();
+    const self = this;
+    process.nextTick(() => {
+      try {
+        self.closeSync(fd);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback();
+    });
   }
 
   closeSync(fd) {
@@ -198,7 +221,9 @@ export class MockFs extends EventEmitter {
       entity = _getFile.call(this, options.fd);
     }
 
-    return new MockReadableStream(entity.getContent());
+    const read = new MockReadableStream(entity.getContent());
+    read.path = path;
+    return read;
   }
 
   createWriteStream(path, options={}) {
@@ -221,14 +246,17 @@ export class MockFs extends EventEmitter {
   }
 
   exists(path, callback) {
-    let exists;
-    try {
-      exists = this.existsSync(path);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback(null, exists);
+    const self = this;
+    process.nextTick(() => {
+      let exists;
+      try {
+        exists = self.existsSync(path);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback(null, exists);
+    });
   }
 
   existsSync(path) {
@@ -236,19 +264,22 @@ export class MockFs extends EventEmitter {
   }
 
   fstat(fd, options, callback) {
-    if (isFunc(options)) {
-      callback = options;
-      options = {};
-    }
+    const self = this;
+    process.nextTick(() => {
+      if (isFunc(options)) {
+        callback = options;
+        options = {};
+      }
 
-    let stats;
-    try {
-      stats = this.fstatSync(fd, options);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback(null, stats);
+      let stats;
+      try {
+        stats = self.fstatSync(fd, options);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback(null, stats);
+    });
   }
 
   fstatSync(fd, options={}) {
@@ -256,17 +287,19 @@ export class MockFs extends EventEmitter {
   }
 
   ftruncate(fd, len, callback) {
-    if (isFunc(len)) {
-      callback = len;
-      len = 0;
-    }
-    try {
-      this.ftruncateSync(fd, len);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback();
+    process.nextTick(() => {
+      if (isFunc(len)) {
+        callback = len;
+        len = 0;
+      }
+      try {
+        this.ftruncateSync(fd, len);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback();
+    });
   }
 
   ftruncateSync(fd, len=0) {
@@ -275,18 +308,21 @@ export class MockFs extends EventEmitter {
   }
 
   mkdir(path, mode, callback) {
-    if (isFunc(mode)) {
-      callback = mode;
-      mode = 0o777;
-    }
+    const self = this;
+    process.nextTick(() => {
+      if (isFunc(mode)) {
+        callback = mode;
+        mode = 0o777;
+      }
 
-    try {
-      this.mkdirSync(path, mode);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback();
+      try {
+        self.mkdirSync(path, mode);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback();
+    });
   }
 
   mkdirSync(path, mode=0o777) {
@@ -294,18 +330,21 @@ export class MockFs extends EventEmitter {
   }
 
   mkdirp(path, mode, callback) {
-    if (isFunc(mode)) {
-      callback = mode;
-      mode = 0o777;
-    }
-    try {
-      this.mkdirpSync(path, mode);
-    } catch (e) {
-      callback(e);
-      return;
-    }
+    const self = this;
+    process.nextTick(() => {
+      if (isFunc(mode)) {
+        callback = mode;
+        mode = 0o777;
+      }
+      try {
+        self.mkdirpSync(path, mode);
+      } catch (e) {
+        callback(e);
+        return;
+      }
 
-    callback();
+      callback();
+    });
   }
 
   mkdirpSync(path, mode=0o777) {
@@ -324,18 +363,21 @@ export class MockFs extends EventEmitter {
   }
 
   open(path, flags, mode, callback) {
-    if (isFunc(mode)) {
-      callback = mode;
-      mode = 0o666;
-    }
-    let fd;
-    try {
-      fd = this.openSync(path, flags, mode);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback(null, fd);
+    const self = this;
+    process.nextTick(() => {
+      if (isFunc(mode)) {
+        callback = mode;
+        mode = 0o666;
+      }
+      let fd;
+      try {
+        fd = self.openSync(path, flags, mode);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback(null, fd);
+    });
   }
 
   openSync(path, flags, mode=0o666) {
@@ -348,17 +390,20 @@ export class MockFs extends EventEmitter {
   }
 
   read(fd, buffer, offset, length, position, callback) {
-    let bytesRead;
-    let readBuffer;
-    try {
-      const entityRead = _readEntity.call(this, fd, buffer, offset, length, position);
-      bytesRead = entityRead.bytesRead;
-      readBuffer = entityRead.buffer;
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback(null, bytesRead, readBuffer);
+    const self = this;
+    process.nextTick(() => {
+      let bytesRead;
+      let readBuffer;
+      try {
+        const entityRead = _readEntity.call(self, fd, buffer, offset, length, position);
+        bytesRead = entityRead.bytesRead;
+        readBuffer = entityRead.buffer;
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback(null, bytesRead, readBuffer);
+    });
   }
 
   readSync(fd, buffer, offset, length, position) {
@@ -367,19 +412,22 @@ export class MockFs extends EventEmitter {
   }
 
   readdir(path, options, callback) {
-    if (isFunc(options)) {
-      callback = options;
-      options = {};
-    }
+    const self = this;
+    process.nextTick(() => {
+      if (isFunc(options)) {
+        callback = options;
+        options = {};
+      }
 
-    let dirContent;
-    try {
-      dirContent = this.readdirSync(path, options);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback(null, dirContent);
+      let dirContent;
+      try {
+        dirContent = self.readdirSync(path, options);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback(null, dirContent);
+    });
   }
 
   readdirSync(path, options={}) {
@@ -387,20 +435,23 @@ export class MockFs extends EventEmitter {
   }
 
   readFile(path, options, callback) {
-    if (isFunc(options)) {
-      callback = options;
-      options = {};
-    }
+    const self = this;
+    process.nextTick(() => {
+      if (isFunc(options)) {
+        callback = options;
+        options = {};
+      }
 
-    let content;
-    try {
-      content = this.readFileSync(path, options);
-    } catch (e) {
-      callback(e);
-      return;
-    }
+      let content;
+      try {
+        content = self.readFileSync(path, options);
+      } catch (e) {
+        callback(e);
+        return;
+      }
 
-    callback(null, content);
+      callback(null, content);
+    });
   }
 
   readFileSync(path, options={}) {
@@ -416,13 +467,16 @@ export class MockFs extends EventEmitter {
   }
 
   rename(oldPath, newPath, callback) {
-    try {
-      this.renameSync(oldPath, newPath);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback();
+    const self = this;
+    process.nextTick(() => {
+      try {
+        self.renameSync(oldPath, newPath);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback();
+    });
   }
 
   renameSync(oldPath, newPath) {
@@ -436,13 +490,16 @@ export class MockFs extends EventEmitter {
   }
 
   rmdir(path, callback) {
-    try {
-      this.rmdirSync(path);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback();
+    const self = this;
+    process.nextTick(() => {
+      try {
+        self.rmdirSync(path);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback();
+    });
   }
 
   rmdirSync(path) {
@@ -451,19 +508,22 @@ export class MockFs extends EventEmitter {
   }
 
   stat(path, options, callback) {
-    if (isFunc(options)) {
-      callback = options;
-      options = {};
-    }
+    const self = this;
+    process.nextTick(() => {
+      if (isFunc(options)) {
+        callback = options;
+        options = {};
+      }
 
-    let stats;
-    try {
-      stats = this.statSync(path, options);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback(null, stats);
+      let stats;
+      try {
+        stats = self.statSync(path, options);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback(null, stats);
+    });
   }
 
   statSync(path, options={}) {
@@ -477,18 +537,21 @@ export class MockFs extends EventEmitter {
   }
 
   truncate(path, len, callback) {
-    if (isFunc(len)) {
-      callback = len;
-      len = 0;
-    }
+    const self = this;
+    process.nextTick(() => {
+      if (isFunc(len)) {
+        callback = len;
+        len = 0;
+      }
 
-    try {
-      this.truncateSync(path, len);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback();
+      try {
+        self.truncateSync(path, len);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback();
+    });
   }
 
   truncateSync(path, len=0) {
@@ -499,13 +562,16 @@ export class MockFs extends EventEmitter {
   }
 
   unlink(path, callback) {
-    try {
-      this.unlinkSync(path);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback();
+    const self = this;
+    process.nextTick(() => {
+      try {
+        self.unlinkSync(path);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback();
+    });
   }
 
   unlinkSync(path) {
@@ -514,46 +580,49 @@ export class MockFs extends EventEmitter {
   }
 
   write(fd, bufferOrString, offsetOrPosition, lengthOrEncoding, positionOrCallback, callback) {
-    if (Buffer.isBuffer(bufferOrString)) {
-      const offset = 0, length = 0, position = 0;
+    const self = this;
+    process.nextTick(() => {
+      if (Buffer.isBuffer(bufferOrString)) {
+        const offset = 0, length = 0, position = 0;
 
-      if (isFunc(offsetOrPosition)) {
-        callback = offsetOrPosition;
-        offsetOrPosition = offset;
-        lengthOrEncoding = length;
-        positionOrCallback = position;
-      } else if (isFunc(lengthOrEncoding)) {
-        callback = lengthOrEncoding;
-        lengthOrEncoding = length;
-        positionOrCallback = position;
-      } else if (isFunc(positionOrCallback)) {
-        callback = positionOrCallback;
-        positionOrCallback = position;
+        if (isFunc(offsetOrPosition)) {
+          callback = offsetOrPosition;
+          offsetOrPosition = offset;
+          lengthOrEncoding = length;
+          positionOrCallback = position;
+        } else if (isFunc(lengthOrEncoding)) {
+          callback = lengthOrEncoding;
+          lengthOrEncoding = length;
+          positionOrCallback = position;
+        } else if (isFunc(positionOrCallback)) {
+          callback = positionOrCallback;
+          positionOrCallback = position;
+        }
+      } else {
+        let position = 0, encoding = 'utf8';
+
+        if (isFunc(offsetOrPosition)) {
+          callback = offsetOrPosition;
+          offsetOrPosition = position;
+          lengthOrEncoding = encoding;
+        } else if (isFunc(lengthOrEncoding)) {
+          callback = lengthOrEncoding;
+          lengthOrEncoding = encoding;
+        }
       }
-    } else {
-      let position = 0, encoding = 'utf8';
 
-      if (isFunc(offsetOrPosition)) {
-        callback = offsetOrPosition;
-        offsetOrPosition = position;
-        lengthOrEncoding = encoding;
-      } else if (isFunc(lengthOrEncoding)) {
-        callback = lengthOrEncoding;
-        lengthOrEncoding = encoding;
+      let written;
+      let writtenData;
+      try {
+        const result = _writeEntity.call(self, fd, bufferOrString, offsetOrPosition, lengthOrEncoding, positionOrCallback);
+        written = result.written;
+        writtenData = result.writtenData;
+      } catch (e) {
+        callback(e);
+        return;
       }
-    }
-
-    let written;
-    let writtenData;
-    try {
-      const result = _writeEntity.call(this, fd, bufferOrString, offsetOrPosition, lengthOrEncoding, positionOrCallback);
-      written = result.written;
-      writtenData = result.writtenData;
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback(null, written, writtenData);
+      callback(null, written, writtenData);
+    });
   }
 
   writeSync(fd, bufferOrString, offsetOrPosition=0, lengthOrEncoding=0, position=0) {
@@ -563,18 +632,21 @@ export class MockFs extends EventEmitter {
   }
 
   writeFile(file, data, options, callback) {
-    if (isFunc(options)) {
-      callback = options;
-      options = {};
-    }
+    const self = this;
+    process.nextTick(() => {
+      if (isFunc(options)) {
+        callback = options;
+        options = {};
+      }
 
-    try {
-      this.writeFileSync(file, data, options);
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback();
+      try {
+        self.writeFileSync(file, data, options);
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback();
+    });
   }
 
   writeFileSync(file, data, options={}) {
@@ -817,6 +889,7 @@ function _updateFileContent(path, content) {
     updateCount++;
     toUpdate.content = bufferContent;
     toUpdate.stats.size = bufferContent.length;
+    toUpdate.stats.mtimeMs = new Date().getTime();
     return toUpdate;
   });
   return updateCount;

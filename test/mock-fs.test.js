@@ -27,6 +27,22 @@ describe('mock fs tests', () => {
     fs.removePath('/testremove.jpg');
   });
 
+  it('test get file content', () => {
+    fs.addFile('/testfilecontent', {}, 'my content');
+    expect(fs.getFileContent('/testfilecontent')).to.be('my content');
+  });
+
+  it('test touch file', (done) => {
+    fs.addFile('/touchfile.jpg', {}, 'touched');
+    const origStat = fs.statSync('/touchfile.jpg');
+    process.nextTick(() => {
+      fs.touchFile('/touchfile.jpg');
+      const newStat = fs.statSync('/touchfile.jpg');
+      expect(newStat.mtime).not.to.be(origStat.mtime);
+      done();
+    });
+  });
+
   it('test remove path with sub directories', () => {
     fs.addDirectory('/test/path/with/sub');
     expect(fs.existsSync('/test')).to.be.ok();
