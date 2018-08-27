@@ -32,6 +32,7 @@ export class HttpServer {
     this.urlData = {};
     this.requestCallback = (options, callback) => {callback()};
     this.requestedUrls = {};
+    this.chunkData = {};
   }
 
   /**
@@ -95,9 +96,16 @@ export class HttpServer {
    * @param {string} url Full HTTP URL.
    * @param {object} requestOptions The options for the request that created the url data.
    * @param {object} responseOptions Will be used as the response's options, including such things as statusCode and headers.
-   * @param {string} responseBody Will be used as the response's body.
+   * @param {string|Buffer} responseBody Will be used as the response's body.
    */
   setUrlData(url, requestOptions={}, responseOptions={}, responseBody='') {
+    if (responseBody) {
+      if (!Buffer.isBuffer(responseBody)) {
+        responseBody = Buffer.from(responseBody);
+      }
+    } else {
+      responseBody = Buffer.alloc(0);
+    }
     this.urlData[_getUrlDataKey(url)] = {responseOptions, responseBody};
   }
 
@@ -123,7 +131,7 @@ export class HttpServer {
   /**
    * Retrieves the default response body for a given url.
    * @param {string} url Full HTTP URL.
-   * @returns {string} Response body, or null if the url has no default data.
+   * @returns {Buffer} Response body, or null if the url has no default data.
    */
   getUrlResponseBody(url) {
     const key = _getUrlDataKey(url);
@@ -196,6 +204,12 @@ export class HttpServer {
           requestOptions = options;
         }
 
+        if (responseBody) {
+          if (!Buffer.isBuffer(responseBody)) {
+            responseBody = Buffer.from(responseBody);
+          }
+        }
+
         const {url, method} = requestOptions;
 
         if (!ignoreCount) {
@@ -248,7 +262,7 @@ export class HttpServer {
     for (const url in this.urlData) {
       console.log(`- ${url}`);
       console.log(`  options: ${JSON.stringify(this.getUrlResponseOptions(url))}`);
-      console.log(`  content: "${this.getUrlResponseBody(url)}"`);
+      console.log(`  content: "${this.getUrlResponseBody(url).toString('utf8')}"`);
       console.log('');
     }
     console.log(`***** END URL DATA *****`);
@@ -383,12 +397,17 @@ function _urlExists(url, callback) {
  * Creates a new instance of a server response.
  * @param {number} statusCode The status code of the response.
  * @param {object} [headers] Headers of the response.
- * @param {string} [body] Body content of the response.
- * @param {string} [fallbackBody] Body content of the response if body parameter is falsy.
+ * @param {Buffer} [body] Body content of the response.
+ * @param {Buffer|string} [fallbackBody] Body content of the response if body parameter is falsy.
  * @returns {MockIncomingMessage} The newly created response instance.
  * @private
  */
-function _createResponse(statusCode, headers={}, body, fallbackBody='') {
+function _createResponse(statusCode, headers={}, body, fallbackBody=null) {
+  if (fallbackBody) {
+    if (!Buffer.isBuffer(fallbackBody)) {
+      fallbackBody = Buffer.from(fallbackBody);
+    }
+  }
   return new MockIncomingMessage({statusCode, headers}, body || fallbackBody);
 }
 
@@ -398,17 +417,46 @@ function _createResponse(statusCode, headers={}, body, fallbackBody='') {
  * @param {string} callback.err Truthy if there were errors creating the response.
  * @param {MockIncomingMessage} callback.response The server's response.
  * @param {object} options Request options that were submitted with the request.
- * @param {string} [responseBody] If specified, the body content to use in place of the server's default body.
+ * @param {Buffer} [responseBody] If specified, the body content to use in place of the server's default body.
  * @param {boolean} [includeBody] If true, includes the response body in the response. Otherwise only includes headers.
  * @private
  */
-function _getGetResponse(callback, {url}, responseBody='', includeBody=true) {
+function _getGetResponse(callback, {url, headers={}}, responseBody=null, includeBody=true) {
   if (this.urlExists(url)) {
-    const urlContent = this.getUrlResponseBody(url);
-    callback(null, _createResponse(200, {
+    let startByte = null;
+    let endByte = null;
+    let statusCode = 200;
+    if (headers.range) {
+      //options.headers.range = 'bytes=' + currChunk + '-' + endChunk;
+      const regex = new RegExp('^bytes=([0-9]+)-([0-9]+)$', 'g');
+      const match = regex.exec(headers.range);
+      if (match) {
+        startByte = parseInt(match[1], 10);
+        endByte = parseInt(match[2], 10);
+      } else {
+        callback(null, _createResponse(400, {}, responseBody, 'unsupported range header'));
+        return;
+      }
+    }
+    let urlContent = responseBody || this.getUrlResponseBody(url);
+
+    if (endByte) {
+      if (startByte >= endByte || startByte < 0 || endByte < 0 || (endByte + 1) >= urlContent.length) {
+        _createResponse(400, {}, responseBody, 'byte range is out of range');
+        return;
+      }
+
+      statusCode = 206;
+
+      const partialBuffer = Buffer.alloc(endByte - startByte + 1);
+      urlContent.copy(partialBuffer, 0, startByte, endByte + 1);
+      urlContent = partialBuffer;
+    }
+
+    callback(null, _createResponse(statusCode, {
       'Content-Type': mime.getType(url),
-      'Content-Length': responseBody ? responseBody.length : urlContent.length
-    }, responseBody, urlContent));
+      'Content-Length': urlContent.length
+    }, urlContent));
   } else {
     callback(null, _createResponse(404));
   }
@@ -420,10 +468,10 @@ function _getGetResponse(callback, {url}, responseBody='', includeBody=true) {
  * @param {string} callback.err Truthy if there were errors creating the response.
  * @param {MockIncomingMessage} callback.response The server's response.
  * @param {object} options Request options that were submitted with the request.
- * @param {string} [responseBody] If specified, the body content to use in place of the server's default body.
+ * @param {Buffer} [responseBody] If specified, the body content to use in place of the server's default body.
  * @private
  */
-function _getDeleteResponse(callback, {url}, responseBody='') {
+function _getDeleteResponse(callback, {url}, responseBody=null) {
   _urlExists.call(this, url, (err, exists) => {
     if (err) {
       callback(err);
@@ -444,13 +492,13 @@ function _getDeleteResponse(callback, {url}, responseBody='') {
  * @param {string} callback.err Truthy if there were errors creating the response.
  * @param {MockIncomingMessage} callback.response The server's response.
  * @param {object} options Request options that were submitted with the request.
- * @param {string} [responseBody] If specified, the body content to use in place of the server's default body.
+ * @param {Buffer} [responseBody] If specified, the body content to use in place of the server's default body.
  * @param {string} [requestBody] If specified, the body content that was sent with the request.
  * @private
  */
-function _getPostResponse(callback, options, responseBody='', requestBody='') {
+function _getPostResponse(callback, options, responseBody=null, requestBody='') {
   const self = this;
-  const {url} = options;
+  const {url, form=null} = options;
   const parent = url.substr(0, url.lastIndexOf('/'));
 
   function _getUrlExists(cb) {
@@ -482,8 +530,45 @@ function _getPostResponse(callback, options, responseBody='', requestBody='') {
       if (exists) {
         callback(null, _createResponse(409, {}, responseBody, 'conflict: already exists'));
       } else {
-        this.setUrlData(url, options, {}, requestBody);
-        callback(null, _createResponse(201, {}, responseBody, 'path created'));
+        let fileOffset = 0;
+        let chunkLength = 0;
+        let fileLength = 0;
+        if (form) {
+          fileOffset = form['file@Offset'];
+          chunkLength = form['chunk@Length'];
+          fileLength = form['file@Length'];
+        }
+
+        if (chunkLength) {
+          if (!this.chunkData[url]) {
+            this.chunkData[url] = {content: Buffer.alloc(fileLength), currOffset: 0};
+          }
+
+          const currChunk = Buffer.from(requestBody);
+          let {content, currOffset} = this.chunkData[url];
+
+          if (!fileOffset) {
+            fileOffset = currOffset;
+          }
+
+          if (fileOffset < 0 || fileOffset >= content.length || chunkLength != requestBody.length) {
+            callback(null, _createResponse(400, {}, responseBody, 'chunk information is not valid'));
+            return;
+          }
+          currChunk.copy(content, currOffset);
+          currOffset += chunkLength;
+          this.chunkData[url].currOffset = currOffset;
+
+          if (currOffset >= fileLength) {
+            this.setUrlData(url, options, {}, content.toString());
+            delete this.chunkData[url];
+          }
+
+          callback(null, _createResponse(200, {}, responseBody, 'chunk uploaded'));
+        } else {
+          this.setUrlData(url, options, {}, requestBody);
+          callback(null, _createResponse(201, {}, responseBody, 'path created'));
+        }
       }
     });
   });
@@ -495,11 +580,11 @@ function _getPostResponse(callback, options, responseBody='', requestBody='') {
  * @param {string} callback.err Truthy if there were errors creating the response.
  * @param {MockIncomingMessage} callback.response The server's response.
  * @param {object} options Request options that were submitted with the request.
- * @param {string} [responseBody] If specified, the body content to use in place of the server's default body.
+ * @param {Buffer} [responseBody] If specified, the body content to use in place of the server's default body.
  * @param {string} [requestBody] If specified, the body content that was sent with the request.
  * @private
  */
-function _getPutResponse(callback, options, responseBody='', requestBody='') {
+function _getPutResponse(callback, options, responseBody=null, requestBody='') {
   const {url} = options;
   _urlExists.call(this, url, (err, exists) => {
     if (err) {
@@ -521,10 +606,10 @@ function _getPutResponse(callback, options, responseBody='', requestBody='') {
  * @param {string} callback.err Truthy if there were errors creating the response.
  * @param {MockIncomingMessage} callback.response The server's response.
  * @param {object} options Request options that were submitted with the request.
- * @param {string} [responseBody] If specified, the body content to use in place of the server's default body.
+ * @param {Buffer} [responseBody] If specified, the body content to use in place of the server's default body.
  * @private
  */
-function _getMoveResponse(callback, options, responseBody) {
+function _getMoveResponse(callback, options, responseBody=null) {
   const {url, headers={}} = options;
   let destUrl;
 

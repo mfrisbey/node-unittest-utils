@@ -65,6 +65,15 @@ export function registerUrlCallback(method, url, callback) {
 }
 
 /**
+ * Removes the callback invoked when a request with a specified method is sent to a specified url.
+ * @param {string} method An HTTP method.
+ * @param {string} url Full HTTP URL.
+ */
+export function unregisterUrlCallback(method, url) {
+  httpServer.unregisterUrl(method, url);
+}
+
+/**
  * Convenience method that sets a given URLs response to the specified values.
  * @param {string} method An HTTP method.
  * @param {string} url Full HTTP URL.

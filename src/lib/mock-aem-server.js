@@ -5,6 +5,7 @@ import {MockFs} from './mock-fs';
 
 const API_ASSETS = '/api/assets';
 const CONTENT_DAM = '/content/dam';
+const ORIGINAL_RENDITION = '/jcr:content/renditions/original';
 
 export class MockAemServer extends HttpServer {
 
@@ -22,11 +23,77 @@ export class MockAemServer extends HttpServer {
   }
 
   /**
+   * Overridden to convert the URL to an appropriate aem url.
+   */
+  registerUrl(method, url, callback) {
+    const options = _getModifiedOptions({url});
+    super.registerUrl(method, options.url, callback);
+  }
+
+  /**
+   * Overridden to convert the URL to an appropriate aem url.
+   */
+  unregisterUrl(method, url) {
+    const options = _getModifiedOptions({url});
+    super.unregisterUrl(method, options.url);
+  }
+
+  /**
+   * Overridden to convert the URL to an appropriate aem url.
+   */
+  isUrlRegistered(method, url) {
+    const options = _getModifiedOptions({url});
+    return super.isUrlRegistered(method, options.url);
+  }
+
+  /**
+   * Overridden to convert the URL to an appropriate aem url.
+   */
+  setUrlData(url, requestOptions, responseOptions, responseBody) {
+    const options = _getModifiedOptions({url});
+    super.setUrlData(options.url, requestOptions, responseOptions, responseBody);
+  }
+
+  /**
+   * Overridden to convert the URL to an appropriate aem url.
+   */
+  urlExists(url) {
+    const options = _getModifiedOptions({url});
+    return super.urlExists(options.url);
+  }
+
+  /**
+   * Overridden to convert the URL to an appropriate aem url.
+   */
+  getUrlResponseOptions(url) {
+    const options = _getModifiedOptions({url});
+    return super.getUrlResponseOptions(options.url);
+  }
+
+  /**
+   * Overridden to convert the URL to an appropriate aem url.
+   */
+  getUrlResponseBody(url) {
+    const options = _getModifiedOptions({url});
+    return super.getUrlResponseBody(options.url);
+  }
+
+  /**
+   * Overridden to convert the URL to an appropriate aem url.
+   */
+  deleteUrlData(url) {
+    const options = _getModifiedOptions({url});
+    super.deleteUrlData(options.url);
+  }
+
+  /**
    * Registers additional data (including .json URLs) when creating assets.
    * @param {object} options The request options.
    * @param {function} done Shares the same signature as the callback for registerRequestCallback().
    */
   processRequest(options, done) {
+    options = _getModifiedOptions(options);
+
     const {url, form={}, headers={}} = options;
     const parsedUrl = URL.parse(url);
 
@@ -40,42 +107,19 @@ export class MockAemServer extends HttpServer {
 
       let assetPath = parsedUrl.pathname;
       const parsed = URL.parse(url);
-      if (_isAssetsApiPath(parsed.pathname)) {
-        // request came to the assets api. strip /api/assets out of the path so it can be replaced
-        // with /content/dam later
-        assetPath = _convertAssetsApiPath(parsed.pathname);
-      } else if (parsed.pathname.indexOf('.createasset.html') >= 0) {
-        // request came to the create asset servlet. build asset path and change method accordingly
-        let directoryPath = parsed.pathname.substr(0, parsed.pathname.indexOf('.createasset.html'));
-
-        if (directoryPath === '/') {
-          directoryPath = '';
-        }
-
-        const parsedPath = Path.parse(form.file.path);
-
-        assetPath = `${directoryPath}/${parsedPath.base}`;
-
-        if (form.replaceAsset) {
-          options.method = 'PUT';
-        }
-      } else if (parsed.pathname === '/bin/wcmcommand') {
-        // request came to wcmcommand. retrieve path and update method accordingly
-        assetPath = form.path;
-
-        options.method = 'DELETE';
-      }
-
       const fullHost = `${parsed.protocol}//${parsed.host}`;
       const fullAssetUrl = `${fullHost}${assetPath}`;
       options.url = fullAssetUrl;
 
       function _doRegisterJsonUrl(method, registerUrl) {
         const parsed = URL.parse(registerUrl);
-        self.registerUrl(method, `${registerUrl}.json`, (options, done) => {
-          const {responseOptions, body} = _getAssetResponse.call(self, method, parsed.pathname, registerUrl);
-          done(null, responseOptions, body);
-        });
+        const toRegister = `${registerUrl}.json`;
+        if (!self.isUrlRegistered(method, toRegister)) {
+          self.registerUrl(method, toRegister, (options, done) => {
+            const {responseOptions, body} = _getAssetResponse.call(self, method, parsed.pathname, registerUrl);
+            done(null, responseOptions, body);
+          });
+        }
       }
 
       function _doUnregisterJsonUrl(method, unregisterUrl) {
@@ -151,6 +195,18 @@ export class MockAemServer extends HttpServer {
   }
 
   /**
+   * Sets the information that will be returned for an asset's info.
+   * @param {string} url Full URL to an asset.
+   * @param {object} info Stat information, similar to a file system file.
+   */
+  setUrlInfo(url, info) {
+    const options = _getModifiedOptions({url});
+
+    const assetPath = URL.parse(options.url).pathname;
+    this.assets.updateFileStats(assetPath, info);
+  }
+
+  /**
    * Converts a timestamp to a date string specific to the aem server.
    * @param {number} timestamp A timestamp value to convert.
    * @returns {string} Converted date string.
@@ -160,7 +216,51 @@ export class MockAemServer extends HttpServer {
   }
 }
 
+function _getModifiedOptions(options) {
+  const {url, form={}} = options;
+  const parsed = URL.parse(url);
+  let assetPath = parsed.pathname;
+  let index;
+
+  if (_isAssetsApiPath(parsed.pathname)) {
+    // request came to the assets api. strip /api/assets out of the path so it can be replaced
+    // with /content/dam later
+    assetPath = _convertAssetsApiPath(parsed.pathname);
+  } else if (parsed.pathname.indexOf('.createasset.html') >= 0) {
+    // request came to the create asset servlet. build asset path and change method accordingly
+    let directoryPath = parsed.pathname.substr(0, parsed.pathname.indexOf('.createasset.html'));
+
+    if (directoryPath === '/') {
+      directoryPath = '';
+    }
+
+    const parsedPath = Path.parse(form.file.path);
+
+    assetPath = `${directoryPath}/${parsedPath.base}`;
+
+    if (form.replaceAsset) {
+      options.method = 'PUT';
+    }
+  } else if (parsed.pathname === '/bin/wcmcommand') {
+    // request came to wcmcommand. retrieve path and update method accordingly
+    assetPath = form.path;
+
+    options.method = 'DELETE';
+  } else if ((index = parsed.pathname.indexOf(ORIGINAL_RENDITION)) >= 0) {
+    // getting the original rendition directly. Just use the normal /content/dam path
+    assetPath = parsed.pathname.substr(0, index);
+  }
+
+  parsed.pathname = assetPath.replace('/.json', '.json');
+  options.url = URL.format(parsed);
+
+  return options;
+}
+
 function _isAssetsApiPath(path) {
+  if (path === API_ASSETS || path === `${API_ASSETS}.json`) {
+    return true;
+  }
   return (path.length > API_ASSETS.length && path.substr(0, API_ASSETS.length + 1) === `${API_ASSETS}/`);
 }
 

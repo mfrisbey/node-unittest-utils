@@ -51,8 +51,10 @@ function _verifyInfo(fullUrl, exists, callback) {
 }
 
 describe('mock aem server tests', () => {
+  let server;
   beforeEach(() => {
-    setHttpServer(new MockAemServer(HOST, USER));
+    server = new MockAemServer(HOST, USER);
+    setHttpServer(server);
   });
 
   it('test asset info url', done => {
@@ -446,5 +448,76 @@ describe('mock aem server tests', () => {
     });
 
     read.pipe(req);
+  });
+
+  it('test root info', (done) => {
+    request(_getAssetsApiUrl('/.json'), (err, res, body) => {
+      expect(err).not.to.be.ok();
+      expect(res).to.be.ok();
+      expect(res.statusCode).to.be(200);
+      expect(body).to.be.ok();
+      done();
+    });
+  });
+
+  it('test get original rendition', (done) => {
+    const read = new MockReadableStream('original rend');
+    const req = request({
+      url: _getContentDamUrl('/original.jpg'),
+      method: 'POST'
+    });
+
+    req.on('response', res => {
+      expect(res).to.be.ok();
+      expect(res.statusCode).to.be(201);
+
+      request(_getContentDamUrl('/original.jpg/jcr:content/renditions/original'), (err, res, body) => {
+        expect(err).not.to.be.ok();
+        expect(res).to.be.ok();
+        expect(res.statusCode).to.be(200);
+        expect(body).to.be.ok();
+        done();
+      });
+    });
+    read.pipe(req);
+  });
+
+  it('test update file info', (done) => {
+    const read = new MockReadableStream('updated file info');
+    const req = request({
+      url: _getContentDamUrl('/updateme.jpg'),
+      method: 'POST'
+    });
+
+    req.on('response', res => {
+      expect(res).to.be.ok();
+      expect(res.statusCode).to.be(201);
+
+      request(_getContentDamUrl('/updateme.jpg.json'), (err, res, body) => {
+        expect(err).not.to.be.ok();
+        expect(res).to.be.ok();
+        expect(res.statusCode).to.be(200);
+        expect(body).to.be.ok();
+
+        const origInfo = JSON.parse(body);
+
+        server.setUrlInfo(_getContentDamUrl('/updateme.jpg'), {
+          mtimeMs: 12345
+        });
+
+        request(_getContentDamUrl('/updateme.jpg.json'), (err, res, body) => {
+          expect(err).not.to.be.ok();
+          expect(res).to.be.ok();
+          expect(res.statusCode).to.be(200);
+          expect(body).to.be.ok();
+
+          const newInfo = JSON.parse(body);
+
+          expect(origInfo.properties['jcr:lastModified']).not.to.be(newInfo.properties['jcr:lastModified']);
+
+          done();
+        });
+      });
+    });
   });
 });

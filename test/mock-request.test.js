@@ -9,9 +9,13 @@ import {
 
 import {MockWritableStream} from '../src/lib/mock-writable-stream';
 import {MockReadableStream} from '../src/lib/mock-readable-stream';
+import {MockFs} from '../src/lib/mock-fs';
+import async from 'async';
 
 describe('mock request tests', () => {
+  let mockFs;
   beforeEach(() => {
+    mockFs = new MockFs();
     resetRequestState();
 
     registerRequestCallback((options, callback) => {
@@ -529,5 +533,91 @@ describe('mock request tests', () => {
         done();
       });
     });
+  });
+
+  it('test get download range', done => {
+    submitRequestWithBody({
+      url: 'http://www.adobe.com/range.jpg',
+      method: 'POST'
+    }, 'content with range', () => {
+      request({
+        url: 'http://www.adobe.com/range.jpg',
+        headers: {
+          range: 'bytes=1-5'
+        }
+      }, (err, res, body) => {
+        expect(err).not.to.be.ok();
+        expect(res).to.be.ok();
+        expect(res.statusCode).to.be(206);
+        expect(body).to.be('onten');
+        done();
+      });
+    });
+  });
+
+  it('test post upload chunks', done => {
+    const bodyData = 'uploading some chunks';
+    mockFs.addFile('/chunk.jpg', {}, bodyData);
+
+    let chunkSize = 2;
+    let currOffset = 0;
+
+    async.whilst(() => currOffset < bodyData.length, whileCb => {
+      const req = request({
+        url: 'http://www.adobe.com/chunks.jpg',
+        method: 'POST'
+      });
+
+      req.on('response', res => {
+        expect(res).to.be.ok();
+        expect(res.statusCode).to.be(200);
+        whileCb();
+      });
+
+      const start = currOffset;
+      let end = start + chunkSize - 1;
+
+      if (end >= bodyData.length - 1) {
+        end = bodyData.length - 1;
+        chunkSize = end - start + 1;
+      }
+
+      const read = mockFs.createReadStream('/chunk.jpg', {start, end});
+      const form = req.form();
+      form.append('chunk@Length', chunkSize);
+      form.append('file@Length', bodyData.length);
+      form.append('file', read);
+
+      currOffset += chunkSize;
+    }, () => {
+      request('http://www.adobe.com/chunks.jpg', (err, res, body) => {
+        expect(err).not.to.be.ok();
+        expect(res).to.be.ok();
+        expect(res.statusCode).to.be(200);
+        expect(body).to.be(bodyData);
+        done();
+      });
+    });
+  });
+
+  it('test req write', (done) => {
+    const req = request({
+      url: 'http://www.adobe.com/write.jpg',
+      method: 'POST'
+    }, (err, res) => {
+      expect(err).not.to.be.ok();
+      expect(res).to.be.ok();
+      expect(res.statusCode).to.be(201);
+
+      request('http://www.adobe.com/write.jpg', (err, res, body) => {
+        expect(err).not.to.be.ok();
+        expect(res).to.be.ok();
+        expect(res.statusCode).to.be(200);
+        expect(body).to.be('hello world!');
+        done();
+      });
+    });
+    req.write('hello world!');
+    req.end();
   });
 });

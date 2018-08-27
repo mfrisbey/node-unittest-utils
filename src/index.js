@@ -25,6 +25,9 @@ class TestFramework {
     this.registerMock('request', request);
     this.registerMock('fs', this.mockFs);
     this.registerMock('stream', MockStream);
+    const mkdirp = this.mockFs.mkdirp.bind(this.mockFs);
+    mkdirp.sync = this.mockFs.mkdirpSync.bind(this.mockFs);
+    this.registerMock('mkdirp', mkdirp);
   }
 
   /**
@@ -35,6 +38,16 @@ class TestFramework {
       mockObject['@global'] = true;
       this.mocks[moduleName] = mockObject;
     }
+  }
+
+  /**
+   * See export definition for documentation.
+   */
+  getMock(moduleName) {
+    if (this.mocks[moduleName]) {
+      return this.mocks[moduleName];
+    }
+    return false;
   }
 
   /**
@@ -55,6 +68,15 @@ const framework = new TestFramework();
  */
 export function registerMock(moduleName, mockObject) {
   framework.registerMock(moduleName, mockObject);
+}
+
+/**
+ * Retrieves the mock object that was registered for a sepcified module.
+ * @param {string} moduleName The name of a module.
+ * @returns {*} The mock object for a module, or false if the module is not registered.
+ */
+export function getMock(moduleName) {
+  return framework.getMock(moduleName);
 }
 
 /**

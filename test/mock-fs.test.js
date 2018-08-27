@@ -79,6 +79,11 @@ describe('mock fs tests', () => {
     });
   });
 
+  it('test open create file', () => {
+    fs.openSync('/opennoexist.jpg', 'w');
+    expect(fs.existsSync('/opennoexist.jpg')).to.be.ok();
+  });
+
   it('test create read write stream', (done) => {
     fs.addFile('/testwrite.jpg', {}, '');
 
@@ -95,6 +100,19 @@ describe('mock fs tests', () => {
       });
       updatedRead.pipe(targetWrite);
     });
+  });
+
+  it('test create write stream no exist', () => {
+    fs.createWriteStream('/doesnotexist.jpg');
+    expect(fs.existsSync('/doesnotexist.jpg')).to.be.ok();
+
+    let threw = false;
+    try {
+      fs.createWriteStream('/missingparent/doesnotexist.jpg');
+    } catch (e) {
+      threw = true;
+    }
+    expect(threw).to.be.ok();
   });
 
   it('test exists', (done) => {
@@ -395,7 +413,7 @@ describe('mock fs tests', () => {
 
     const buffer = Buffer.from('hello world!');
 
-    fs.write(fd, 'hello', (err, written, writtenString) => {
+    fs.write(fd, 'hello', 0, 'ascii', (err, written, writtenString) => {
       expect(err).not.to.be.ok();
       expect(written).to.be(5);
       expect(writtenString).to.be('hello');

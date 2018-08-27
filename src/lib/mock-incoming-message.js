@@ -12,9 +12,9 @@ export class MockIncomingMessage extends MockReadableStream {
    * @param {object} options Values to use as the response's data.
    * @param {number} [options.statusCode] The status code of the response.
    * @param {object} [options.headers] Headers to send with the response.
-   * @param {string} [body] Value to use as the response's body.
+   * @param {Buffer} [body] Value to use as the response's body.
    */
-  constructor({statusCode=501, headers={}}, body='') {
+  constructor({statusCode=501, headers={}}, body=null) {
     super(body);
 
     this.statusCode = statusCode;
@@ -25,10 +25,19 @@ export class MockIncomingMessage extends MockReadableStream {
 
   /**
    * Retrieves the response's body content.
-   * @returns {string} A response body.
+   * @returns {Buffer} A response body.
    */
   getBody() {
     return this.body;
+  }
+
+  /**
+   * Retrieves the response's body content as a utf8 string.
+   * @returns {string} A response body.
+   */
+  getBodyAsString() {
+    const body = this.getBody();
+    return body ? this.getBody().toString() : '';
   }
 
   /**

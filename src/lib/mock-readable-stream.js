@@ -7,9 +7,9 @@ export class MockReadableStream extends ReadableStreamBuffer {
 
   /**
    * Initializes a new stream that will read the specified data.
-   * @param {string} [data] Data to be read.
+   * @param {string|Buffer} [data] Data to be read.
    */
-  constructor(data='') {
+  constructor(data=null) {
     super();
 
     this.readCallback = () => true;

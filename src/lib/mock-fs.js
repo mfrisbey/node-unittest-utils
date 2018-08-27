@@ -27,6 +27,13 @@ export class MockFs extends EventEmitter {
    */
   constructor() {
     super();
+    this.resetFileSystem();
+  }
+
+  /**
+   * Reverts the mock object to it's default, empty state.
+   */
+  resetFileSystem() {
     this.db = new Datastore();
     this.paths = this.db.addCollection('paths');
     this.openFds = {};
@@ -86,6 +93,16 @@ export class MockFs extends EventEmitter {
   }
 
   /**
+   * Merges a file's current stats with a given set of new stats.
+   * @param {string} fullPath Full path to the file.
+   * @param {object} stats File stat information.
+   */
+  updateFileStats(fullPath, stats) {
+    const entity = _getFile.call(this, fullPath);
+    _updateEntityStats.call(this, entity.getFullPath(), stats);
+  }
+
+  /**
    * Touches an existing file by updating its modified dates.
    * @param {string} fullPath Full path to a file.
    */
@@ -134,7 +151,7 @@ export class MockFs extends EventEmitter {
     let orphaned = false;
 
     entities.forEach(item => {
-      const entity = new MockEntity(item);
+      const entity = new MockEntity(this, item);
       if (entity.getPath()) {
         const parent = _getEntity.call(this, entity.getPath());
 
@@ -221,7 +238,20 @@ export class MockFs extends EventEmitter {
       entity = _getFile.call(this, options.fd);
     }
 
-    const read = new MockReadableStream(entity.getContent());
+    let content = entity.getContent();
+    if (options.start !== undefined) {
+      let {start, end=0} = options;
+
+      if (!end) {
+        end = content.length - 1;
+      }
+
+      const subBuffer = Buffer.alloc(end - start + 1);
+      content.copy(subBuffer, 0, start, end + 1);
+      content = subBuffer;
+    }
+
+    const read = new MockReadableStream(content);
     read.path = path;
     return read;
   }
@@ -229,6 +259,14 @@ export class MockFs extends EventEmitter {
   createWriteStream(path, options={}) {
     let entity;
     const self = this;
+
+    const exists = this.existsSync(path);
+
+    if (!exists) {
+      this.addFile(path, {}, '', {noCreateParents: true});
+    } else {
+      this.truncateSync(path);
+    }
 
     if (path) {
       entity = _getFile.call(this, path);
@@ -241,6 +279,8 @@ export class MockFs extends EventEmitter {
     stream.on('finish', () => {
       _updateFileContent.call(self, entity.getFullPath(), stream.getContentsAsString());
     });
+
+    stream.path = path;
 
     return stream;
   }
@@ -369,6 +409,7 @@ export class MockFs extends EventEmitter {
         callback = mode;
         mode = 0o666;
       }
+
       let fd;
       try {
         fd = self.openSync(path, flags, mode);
@@ -381,6 +422,19 @@ export class MockFs extends EventEmitter {
   }
 
   openSync(path, flags, mode=0o666) {
+    if (flags === 'w' || flags === 'wx') {
+      const exists = this.existsSync(path);
+
+      if (exists && flags === 'wx') {
+        callback(`path to open and create already exists ${path}`);
+        return;
+      } else if (exists) {
+        this.truncateSync(path);
+      }
+
+      this.addFile(path, {}, '', {noCreateParents: true});
+    }
+
     const fid = _getFile.call(this, path).getId();
     if (this.openFds[fid]) {
       throw new Error(`path is already open: ${path}`);
@@ -486,7 +540,7 @@ export class MockFs extends EventEmitter {
     if (exists) {
       this.removePath(newPath);
     }
-    _moveEntity.call(this, oldPath, newPath);
+    _moveEntity.call(this, source.getFullPath(), newPath);
   }
 
   rmdir(path, callback) {
@@ -582,33 +636,18 @@ export class MockFs extends EventEmitter {
   write(fd, bufferOrString, offsetOrPosition, lengthOrEncoding, positionOrCallback, callback) {
     const self = this;
     process.nextTick(() => {
-      if (Buffer.isBuffer(bufferOrString)) {
-        const offset = 0, length = 0, position = 0;
-
-        if (isFunc(offsetOrPosition)) {
-          callback = offsetOrPosition;
-          offsetOrPosition = offset;
-          lengthOrEncoding = length;
-          positionOrCallback = position;
-        } else if (isFunc(lengthOrEncoding)) {
-          callback = lengthOrEncoding;
-          lengthOrEncoding = length;
-          positionOrCallback = position;
-        } else if (isFunc(positionOrCallback)) {
-          callback = positionOrCallback;
-          positionOrCallback = position;
-        }
-      } else {
-        let position = 0, encoding = 'utf8';
-
-        if (isFunc(offsetOrPosition)) {
-          callback = offsetOrPosition;
-          offsetOrPosition = position;
-          lengthOrEncoding = encoding;
-        } else if (isFunc(lengthOrEncoding)) {
-          callback = lengthOrEncoding;
-          lengthOrEncoding = encoding;
-        }
+      if (isFunc(offsetOrPosition)) {
+        callback = offsetOrPosition;
+        offsetOrPosition = 0;
+        lengthOrEncoding = 0;
+        positionOrCallback = 0;
+      } else if (isFunc(lengthOrEncoding)) {
+        callback = lengthOrEncoding;
+        lengthOrEncoding = 0;
+        positionOrCallback = 0;
+      } else if (isFunc(positionOrCallback)) {
+        callback = positionOrCallback;
+        positionOrCallback = 0;
       }
 
       let written;
@@ -656,11 +695,54 @@ export class MockFs extends EventEmitter {
   }
 }
 
+function _defineDateStatProperty(propertyName) {
+  const self = this;
+  const targetProperty = `${propertyName}Ms`;
+  Object.defineProperty(self.stats, propertyName, {
+    get: function () {
+      return new Date(self.stats[targetProperty]);
+    }, set: function (modified) {
+      self.stats[targetProperty] = modified.getTime();
+    }, configurable: true
+  });
+};
+
 class MockStats {
-  constructor(stats) {
-    Object.keys(stats).forEach(key => {
-      this[key] = stats[key];
+  constructor(fs, path, stats) {
+    const self = this;
+    this.fs = fs;
+    this.path = path;
+    this.rawStats = Object.assign({}, stats);
+    this.stats = {};
+    Object.keys(self.rawStats).forEach(key => {
+      Object.defineProperty(self.stats, key, {
+        get: function () {
+          return self.rawStats[key];
+        }, set: function (modified) {
+          self.rawStats[key] = modified;
+          const toModify = {};
+          toModify[key] = modified;
+          _updateEntityStats.call(self.fs, self.path, toModify);
+        }, configurable: true
+      });
     });
+
+    _defineDateStatProperty.call(this, 'atime');
+    _defineDateStatProperty.call(this, 'mtime');
+    _defineDateStatProperty.call(this, 'ctime');
+    _defineDateStatProperty.call(this, 'birthtime');
+
+    this.stats.isFile = function () {
+      return !self.stats.isDir;
+    };
+
+    this.stats.isDirectory = function () {
+      return self.stats.isDir;
+    };
+  }
+
+  getStats() {
+    return this.stats;
   }
 
   get atime() {
@@ -677,6 +759,7 @@ class MockStats {
 
   set mtime(value) {
     this.mtimeMs = value.getTime();
+    _updateEntityStats.call(this.fs, this.path, {mtimeMs: this.mtimeMs});
   }
 
   get ctime() {
@@ -705,7 +788,8 @@ class MockStats {
 }
 
 class MockEntity {
-  constructor(options) {
+  constructor(fs, options) {
+    this.fs = fs;
     this.options = options;
   }
 
@@ -726,7 +810,7 @@ class MockEntity {
   }
 
   getStats() {
-    return new MockStats(this.getRawStats());
+    return new MockStats(this.fs, this.getPath(), this.getRawStats()).getStats();
   }
 
   getRawStats() {
@@ -865,13 +949,13 @@ function _findEntity(query) {
   if (entity.length > 1) {
     throw new Error(`duplicate entity found: ${path}`);
   } else {
-    return entity.length > 0 ? new MockEntity(entity[0]) : false;
+    return entity.length > 0 ? new MockEntity(this, entity[0]) : false;
   }
 }
 
 function _getDirectoryChildren(path) {
   const entity = _getDirectoryByPath.call(this, path);
-  return this.paths.find({path: entity.getFullPath()}).map(item => new MockEntity(item));
+  return this.paths.find({path: entity.getFullPath()}).map(item => new MockEntity(this, item));
 }
 
 function _updateFileContent(path, content) {
@@ -880,7 +964,9 @@ function _updateFileContent(path, content) {
 
   let bufferContent = content;
 
-  if (!Buffer.isBuffer(content)) {
+  if (!content) {
+    bufferContent = Buffer.alloc(0);
+  } else if (!Buffer.isBuffer(content)) {
     bufferContent = Buffer.from(content);
   }
 
@@ -996,29 +1082,36 @@ function _readEntity(fd, buffer, offset, length, position) {
 function _writeEntity(fd, bufferOrString, offsetOrPosition=0, lengthOrEncoding=0, position=0) {
   let encoding = 'utf8';
   let toWrite = bufferOrString;
-  let isBuffer = false;
-  if (Buffer.isBuffer(bufferOrString)) {
-    isBuffer = true;
-    toWrite = '';
-    const buffer = bufferOrString;
-    const offset = offsetOrPosition;
-    const length = lengthOrEncoding || buffer.length;
+  let offset = offsetOrPosition;
+  let length = lengthOrEncoding;
+  let isBuffer = true;
 
-    for (let i = offset; i < (offset + length); i++) {
-      toWrite += buffer.toString(encoding, i, i + 1);
-    }
-  } else {
+  if (!toWrite) {
+    toWrite = Buffer.alloc(0);
+  } else if (!Buffer.isBuffer(toWrite)) {
+    isBuffer = false;
+    toWrite = Buffer.from(toWrite);
+  }
+
+  if (typeof lengthOrEncoding === 'string') {
+    encoding = lengthOrEncoding;
     position = offsetOrPosition;
-    encoding = lengthOrEncoding || encoding;
+    length = toWrite.length;
+  }
+
+  if (!length) {
+    length = toWrite.length;
   }
 
   const entity = _getFile.call(this, fd);
 
   let content = entity.getContent();
-  content.write(toWrite, position, toWrite.length, encoding);
+  toWrite.copy(content, position, offset, offset + length);
+
+  const actualWritten = Buffer.alloc(length);
+  toWrite.copy(actualWritten, 0, offset, offset + length);
 
   _updateFileContent.call(this, entity.getFullPath(), content);
 
-  return {written: toWrite.length, writtenData: isBuffer ? Buffer.from(toWrite) : toWrite};
-
+  return {written: length, writtenData: isBuffer ? actualWritten : actualWritten.toString(encoding)};
 }

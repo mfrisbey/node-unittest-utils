@@ -23,6 +23,7 @@ export class MockClientRequest extends MockWritableStream {
     this.responseCallback = responseCallback;
     this.httpServer = httpServer;
     this.reqForm = null;
+    this.ended = false;
 
     if (!this.httpServer) {
       this.httpServer = new HttpServer();
@@ -33,40 +34,43 @@ export class MockClientRequest extends MockWritableStream {
    * Overridden to do the work of generating a response to the request.
    */
   end(data, encoding, callback) {
-    const self = this;
-    if (data) {
-      this.write(data, encoding);
-    }
-    const options = this.options;
+    if (!this.ended) {
+      this.ended = true;
+      const self = this;
+      if (data) {
+        this.write(data, encoding);
+      }
+      const options = this.options;
 
-    if (this.reqForm) {
-      options.form = this.reqForm.data;
-    }
+      if (this.reqForm) {
+        options.form = this.reqForm.data;
+      }
 
-    this.httpServer.getResponse(options, this.getContentsAsString(), (err, response) => {
-      if (err) {
-        self.emit('error', err);
-        if (self.responseCallback) {
-          self.responseCallback(err);
+      this.httpServer.getResponse(options, this.getContentsAsString(), (err, response) => {
+        if (err) {
+          self.emit('error', err);
+          if (self.responseCallback) {
+            self.responseCallback(err);
+          }
+          return;
+        } else {
+          response.on('end', () => {
+            self.emit('end');
+            super.end(null, null, callback);
+          });
+
+          self.emit('response', response);
+
+          process.nextTick(() => {
+            const dummyStream = new MockWritableStream();
+            response.pipe(dummyStream);
+          });
         }
-        return;
-      } else {
-        response.on('end', () => {
-          self.emit('end');
-          super.end(null, null, callback);
-        });
-
-        self.emit('response', response);
-
-        process.nextTick(() => {
-          const dummyStream = new MockWritableStream();
-          response.pipe(dummyStream);
-        });
-      }
-      if (self.responseCallback) {
-        self.responseCallback(err, response, response.getBody());
-      }
-    });
+        if (self.responseCallback) {
+          self.responseCallback(err, response, response.getBodyAsString());
+        }
+      });
+    }
   }
 
   /**
